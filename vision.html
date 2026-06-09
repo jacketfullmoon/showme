@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#000000" />
+  <link rel="manifest" href="vision-manifest.json" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <title>Vision Assist</title>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --accent: #4fc3f7;
+      --accent-dim: rgba(79,195,247,0.18);
+      --accent-glow: rgba(79,195,247,0.30);
+      --text: #f5f5f7;
+      --muted: rgba(255,255,255,0.42);
+      --border: rgba(255,255,255,0.10);
+      --surface: rgba(16,16,20,0.88);
+      --yellow: #ffd60a;
+      --danger: #ff453a;
+    }
+
+    html, body {
+      height: 100%; background: #000; color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+      overflow: hidden; -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── CAMERA ─────────────────────────────────────────── */
+    #camera-wrap {
+      position: fixed; inset: 0; background: #000;
+    }
+    #glCanvas {
+      width: 100%; height: 100%; object-fit: cover; display: none;
+    }
+    #no-camera {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 14px; padding: 2rem;
+    }
+    .cam-icon {
+      width: 76px; height: 76px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border); border-radius: 22px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #no-camera h2 { font-size: 1.1rem; font-weight: 700; letter-spacing: -0.01em; }
+    #no-camera p  { font-size: 0.83rem; color: var(--muted); text-align: center; line-height: 1.55; }
+
+    /* ── GLASS UTIL ─────────────────────────────────────── */
+    .glass {
+      background: var(--surface);
+      backdrop-filter: blur(28px) saturate(1.8);
+      -webkit-backdrop-filter: blur(28px) saturate(1.8);
+      border: 1px solid var(--border);
+    }
+
+    /* ── TOP BAR ─────────────────────────────────────────── */
+    #top-bar {
+      position: fixed;
+      top: env(safe-area-inset-top, 0); left: 0; right: 0;
+      z-index: 20; pointer-events: none;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 18px;
+      background: linear-gradient(to bottom, rgba(0,0,0,0.6) 0%, transparent 100%);
+    }
+    #app-name {
+      font-size: 0.82rem; font-weight: 800;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: rgba(255,255,255,0.85);
+    }
+    #profile-badge {
+      display: none; pointer-events: auto;
+      align-items: center; gap: 5px; cursor: pointer;
+      background: var(--accent-dim);
+      border: 1px solid rgba(79,195,247,0.32);
+      border-radius: 20px; padding: 4px 11px;
+      font-size: 0.7rem; font-weight: 700; color: var(--accent);
+      letter-spacing: 0.02em;
+    }
+
+    /* ── FREEZE BADGE ────────────────────────────────────── */
+    #freeze-badge {
+      position: fixed;
+      top: calc(env(safe-area-inset-top, 0) + 56px);
+      left: 50%; transform: translateX(-50%);
+      z-index: 25; display: none;
+      background: rgba(255,214,10,0.14);
+      border: 1px solid rgba(255,214,10,0.38);
+      color: var(--yellow); border-radius: 20px;
+      padding: 5px 14px; font-size: 0.7rem;
+      font-weight: 800; letter-spacing: 0.1em;
+    }
+    #freeze-badge.on { display: block; }
+
+    /* ── TOAST ───────────────────────────────────────────── */
+    #toast {
+      position: fixed; z-index: 999; pointer-events: none;
+      bottom: calc(100px + env(safe-area-inset-bottom, 0));
+      left: 50%; transform: translateX(-50%) translateY(6px);
+      background: rgba(36,36,40,0.96);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 20px; padding: 8px 18px;
+      font-size: 0.8rem; font-weight: 500; white-space: nowrap;
+      opacity: 0; transition: opacity 0.2s, transform 0.2s;
+    }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* ── DIMMER ──────────────────────────────────────────── */
+    #dimmer {
+      position: fixed; inset: 0; z-index: 38;
+      background: rgba(0,0,0,0.42);
+      opacity: 0; pointer-events: none; transition: opacity 0.25s;
+    }
+    #dimmer.on { opacity: 1; pointer-events: auto; }
+
+    /* ── BOTTOM TOOLBAR ──────────────────────────────────── */
+    #toolbar {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
+      display: none;
+      padding: 0 10px calc(14px + env(safe-area-inset-bottom, 0));
+    }
+    .toolbar-inner {
+      display: flex; align-items: center; justify-content: space-around;
+      padding: 8px 10px; border-radius: 22px;
+    }
+    .tbtn {
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
+      background: none; border: none; color: rgba(255,255,255,0.68);
+      cursor: pointer; padding: 4px 6px; border-radius: 12px;
+      touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+      user-select: none; -webkit-user-select: none;
+      transition: color 0.14s;
+      min-width: 48px;
+    }
+    .tbtn .iw {
+      width: 44px; height: 44px; border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(255,255,255,0.08);
+      transition: background 0.14s, box-shadow 0.14s;
+    }
+    .tbtn svg { width: 20px; height: 20px; }
+    .tbtn .lbl { font-size: 0.6rem; font-weight: 600; letter-spacing: 0.02em; }
+    .tbtn.on { color: var(--accent); }
+    .tbtn.on .iw { background: var(--accent); box-shadow: 0 0 16px var(--accent-glow); }
+    .tbtn.on svg { color: #000; stroke: #000; }
+
+    /* ── SLIDE-UP SHEETS ─────────────────────────────────── */
+    .sheet {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
+      border-radius: 24px 24px 0 0;
+      padding: 0 18px calc(18px + env(safe-area-inset-bottom, 0));
+      transform: translateY(102%);
+      transition: transform 0.34s cubic-bezier(0.32,0.72,0,1);
+    }
+    .sheet.open { transform: translateY(0); }
+    .handle {
+      width: 36px; height: 4px; background: rgba(255,255,255,0.18);
+      border-radius: 2px; margin: 12px auto 16px;
+    }
+    .stitle {
+      font-size: 0.68rem; font-weight: 800;
+      text-transform: uppercase; letter-spacing: 0.1em;
+      color: var(--muted); margin-bottom: 13px;
+    }
+
+    /* sliders */
+    .srow { display: flex; align-items: center; gap: 12px; margin-bottom: 13px; }
+    .slbl { font-size: 0.72rem; color: var(--muted); min-width: 72px; }
+    .sval { font-size: 0.72rem; color: var(--text); min-width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
+    input[type="range"] {
+      flex: 1; height: 3px; -webkit-appearance: none; appearance: none;
+      background: rgba(255,255,255,0.14); border-radius: 2px; outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 22px; height: 22px;
+      border-radius: 50%; background: #fff; cursor: pointer;
+      box-shadow: 0 1px 6px rgba(0,0,0,0.45);
+    }
+
+    /* filter chips */
+    .fgrid { display: grid; grid-template-columns: repeat(3,1fr); gap: 9px; margin-bottom: 6px; }
+    .fchip {
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
+      padding: 12px 6px 10px; border-radius: 14px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.08);
+      cursor: pointer; touch-action: manipulation;
+      transition: background 0.13s, border-color 0.13s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .fchip.on {
+      background: var(--accent-dim);
+      border-color: rgba(79,195,247,0.38);
+    }
+    .fchip .fi { font-size: 1.35rem; line-height: 1; }
+    .fchip .fl { font-size: 0.64rem; font-weight: 700; color: var(--muted); text-align: center; line-height: 1.25; }
+    .fchip.on .fl { color: var(--accent); }
+
+    /* ── RX PANEL ────────────────────────────────────────── */
+    #rx-panel {
+      position: fixed; inset: 0; z-index: 50;
+      display: flex; align-items: flex-end;
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+      opacity: 0; pointer-events: none; transition: opacity 0.24s;
+    }
+    #rx-panel.open { opacity: 1; pointer-events: auto; }
+    #rx-sheet {
+      width: 100%; border-radius: 24px 24px 0 0;
+      padding: 0 20px calc(24px + env(safe-area-inset-bottom, 0));
+      transform: translateY(100%);
+      transition: transform 0.34s cubic-bezier(0.32,0.72,0,1);
+      max-height: 88vh; overflow-y: auto;
+    }
+    #rx-panel.open #rx-sheet { transform: translateY(0); }
+
+    #rx-sheet h2 { font-size: 1.05rem; font-weight: 800; }
+    .rx-subtitle { font-size: 0.71rem; color: var(--muted); line-height: 1.5; margin-bottom: 14px; }
+
+    /* profile tabs */
+    #profile-tabs {
+      display: flex; gap: 7px; margin-bottom: 14px;
+      overflow-x: auto; padding-bottom: 2px; scrollbar-width: none;
+    }
+    #profile-tabs::-webkit-scrollbar { display: none; }
+    .ptab {
+      flex-shrink: 0; padding: 6px 13px; border-radius: 20px;
+      font-size: 0.78rem; font-weight: 700;
+      border: 1px solid rgba(255,255,255,0.11);
+      background: transparent; color: var(--muted);
+      cursor: pointer; touch-action: manipulation;
+      transition: all 0.14s; -webkit-tap-highlight-color: transparent;
+    }
+    .ptab.active { background: var(--accent); border-color: var(--accent); color: #000; }
+    .ptab.add    { color: var(--accent); border-color: rgba(79,195,247,0.28); }
+
+    /* rx fields */
+    .rx-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-bottom: 12px; }
+    .rx-eye { grid-column: span 2; font-size: 0.66rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent); margin-top: 6px; }
+    .rxf label { display: block; font-size: 0.67rem; color: var(--muted); font-weight: 600; margin-bottom: 4px; }
+    .rxf input {
+      width: 100%; background: rgba(255,255,255,0.055);
+      border: 1px solid rgba(255,255,255,0.09); border-radius: 10px;
+      color: var(--text); font-size: 0.95rem; padding: 10px 11px;
+      outline: none; -webkit-appearance: none;
+    }
+    .rxf input:focus { border-color: var(--accent); background: rgba(79,195,247,0.06); }
+    .rx-btns { display: flex; gap: 9px; margin-top: 10px; }
+    .rx-btn { flex: 1; padding: 13px; border-radius: 14px; font-size: 0.88rem; font-weight: 800; border: none; cursor: pointer; touch-action: manipulation; }
+    #rx-save   { background: var(--accent); color: #000; }
+    #rx-cancel { background: rgba(255,255,255,0.07); color: var(--text); }
+    #rx-delete { background: rgba(255,69,58,0.1); color: var(--danger); border: 1px solid rgba(255,69,58,0.22); border-radius: 10px; padding: 6px 13px; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
+
+    /* ── START BUTTON (pre-camera) ───────────────────────── */
+    #start-wrap {
+      position: fixed; bottom: calc(34px + env(safe-area-inset-bottom,0));
+      left: 0; right: 0; z-index: 20;
+      display: flex; justify-content: center;
+    }
+    #start-btn {
+      background: var(--accent); color: #000;
+      border: none; border-radius: 50px;
+      padding: 14px 36px; font-size: 0.95rem; font-weight: 800;
+      cursor: pointer; touch-action: manipulation;
+      box-shadow: 0 0 28px var(--accent-glow);
+      letter-spacing: 0.02em;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Camera -->
+<div id="camera-wrap">
+  <canvas id="glCanvas"></canvas>
+  <div id="no-camera">
+    <div class="cam-icon">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
+        <circle cx="12" cy="13" r="4"/>
+      </svg>
+    </div>
+    <h2>Vision Assist</h2>
+    <p>Tap <strong>Start Camera</strong> below.<br/>Allow camera access when prompted.</p>
+  </div>
+</div>
+
+<!-- Top bar -->
+<div id="top-bar">
+  <span id="app-name">Vision</span>
+  <div id="profile-badge" role="button" tabindex="0">
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/></svg>
+    <span id="pb-name">Default</span>
+  </div>
+</div>
+
+<!-- Freeze badge -->
+<div id="freeze-badge">⬡ FROZEN</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<!-- Sheet dimmer -->
+<div id="dimmer"></div>
+
+<!-- Controls sheet -->
+<div id="ctrl-sheet" class="sheet glass">
+  <div class="handle"></div>
+  <div class="stitle">Adjustments</div>
+  <div class="srow"><span class="slbl">Zoom</span>       <input type="range" id="s-zoom"     min="1"    max="8"   step="0.1"  value="1"  /><span class="sval" id="d-zoom">1.0×</span></div>
+  <div class="srow"><span class="slbl">Sharpness</span>  <input type="range" id="s-sharp"    min="0"    max="3"   step="0.05" value="0"  /><span class="sval" id="d-sharp">0.00</span></div>
+  <div class="srow"><span class="slbl">Contrast</span>   <input type="range" id="s-contrast" min="0.5"  max="2.5" step="0.05" value="1"  /><span class="sval" id="d-contrast">1.00</span></div>
+  <div class="srow"><span class="slbl">Brightness</span> <input type="range" id="s-bright"   min="-0.4" max="0.4" step="0.01" value="0"  /><span class="sval" id="d-bright">+0.00</span></div>
+</div>
+
+<!-- Filters sheet -->
+<div id="filt-sheet" class="sheet glass">
+  <div class="handle"></div>
+  <div class="stitle">Filters</div>
+  <div class="fgrid">
+    <div class="fchip" id="fc-hc">    <span class="fi">◑</span><span class="fl">Hi-Contrast</span></div>
+    <div class="fchip" id="fc-inv">   <span class="fi">◐</span><span class="fl">Invert</span></div>
+    <div class="fchip" id="fc-edge">  <span class="fi">⬡</span><span class="fl">Edge Enhance</span></div>
+  </div>
+  <div class="stitle" style="margin-top:14px;">Color Vision</div>
+  <div class="fgrid">
+    <div class="fchip" id="fc-deut">  <span class="fi">🔴</span><span class="fl">Deuteranopia</span></div>
+    <div class="fchip" id="fc-prot">  <span class="fi">🟢</span><span class="fl">Protanopia</span></div>
+    <div class="fchip" id="fc-trit">  <span class="fi">🔵</span><span class="fl">Tritanopia</span></div>
+  </div>
+</div>
+
+<!-- Rx panel -->
+<div id="rx-panel">
+  <div id="rx-sheet" class="glass">
+    <div class="handle"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <h2>Prescription</h2>
+      <button id="rx-delete">Delete</button>
+    </div>
+
+    <div id="profile-tabs"></div>
+
+    <div class="rxf" style="margin-bottom:12px;">
+      <label>Profile Name</label>
+      <input type="text" id="rx-name" placeholder="e.g. Distance" maxlength="24" />
+    </div>
+
+    <p class="rx-subtitle">Saving applies suggested zoom &amp; sharpness. Screen-based correction is approximate — not a medical device.</p>
+
+    <div class="rx-grid">
+      <div class="rx-eye">Right Eye (OD)</div>
+      <div class="rxf"><label>Sphere (SPH)</label><input type="number" id="od-sph" placeholder="-2.50" step="0.25"/></div>
+      <div class="rxf"><label>Cylinder (CYL)</label><input type="number" id="od-cyl" placeholder="-0.75" step="0.25"/></div>
+      <div class="rxf"><label>Axis</label><input type="number" id="od-axis" placeholder="1–180" min="1" max="180"/></div>
+      <div class="rxf"><label>Add</label><input type="number" id="od-add" placeholder="+1.00" step="0.25"/></div>
+
+      <div class="rx-eye">Left Eye (OS)</div>
+      <div class="rxf"><label>Sphere (SPH)</label><input type="number" id="os-sph" placeholder="-3.00" step="0.25"/></div>
+      <div class="rxf"><label>Cylinder (CYL)</label><input type="number" id="os-cyl" placeholder="-0.50" step="0.25"/></div>
+      <div class="rxf"><label>Axis</label><input type="number" id="os-axis" placeholder="1–180" min="1" max="180"/></div>
+      <div class="rxf"><label>Add</label><input type="number" id="os-add" placeholder="+1.00" step="0.25"/></div>
+    </div>
+
+    <div class="rx-btns">
+      <button class="rx-btn" id="rx-cancel">Cancel</button>
+      <button class="rx-btn" id="rx-save">Save &amp; Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toolbar (shown after camera starts) -->
+<div id="toolbar">
+  <div class="toolbar-inner glass">
+
+    <!-- Torch -->
+    <button class="tbtn" id="btn-torch">
+      <div class="iw"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2l-1 6H4l8 14 1-8h4L9 2z"/></svg></div>
+      <span class="lbl">Torch</span>
+    </button>
+
+    <!-- Freeze -->
+    <button class="tbtn" id="btn-freeze">
+      <div class="iw"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="2" x2="12" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/>
+        <line x1="5.64" y1="5.64" x2="18.36" y2="18.36"/><line x1="18.36" y1="5.64" x2="5.64" y2="18.36"/>
+        <circle cx="12" cy="12" r="3"/>
+      </svg></div>
+      <span class="lbl">Freeze</span>
+    </button>
+
+    <!-- Save -->
+    <button class="tbtn" id="btn-save">
+      <div class="iw"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+      </svg></div>
+      <span class="lbl">Save</span>
+    </button>
+
+    <!-- Filters -->
+    <button class="tbtn" id="btn-filt">
+      <div class="iw"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="6"  cy="14" r="2"/><line x1="6"  y1="2" x2="6"  y2="12"/><line x1="6"  y1="16" x2="6"  y2="22"/>
+        <circle cx="12" cy="6"  r="2"/><line x1="12" y1="2" x2="12" y2="4" /><line x1="12" y1="8"  x2="12" y2="22"/>
+        <circle cx="18" cy="17" r="2"/><line x1="18" y1="2" x2="18" y2="15"/><line x1="18" y1="19" x2="18" y2="22"/>
+      </svg></div>
+      <span class="lbl">Filters</span>
+    </button>
+
+    <!-- Adjust -->
+    <button class="tbtn" id="btn-adj">
+      <div class="iw"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" y1="6"  x2="20" y2="6" /><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/>
+        <circle cx="8"  cy="6"  r="2" fill="currentColor" stroke="none"/>
+        <circle cx="16" cy="12" r="2" fill="currentColor" stroke="none"/>
+        <circle cx="10" cy="18" r="2" fill="currentColor" stroke="none"/>
+      </svg></div>
+      <span class="lbl">Adjust</span>
+    </button>
+
+    <!-- Rx -->
+    <button class="tbtn" id="btn-rx">
+      <div class="iw"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="7.5" cy="12" r="4"/><circle cx="16.5" cy="12" r="4"/>
+        <line x1="11.5" y1="12" x2="12.5" y2="12"/>
+        <line x1="3.5" y1="9.5" x2="2" y2="8"/><line x1="20.5" y1="9.5" x2="22" y2="8"/>
+      </svg></div>
+      <span class="lbl">Rx</span>
+    </button>
+
+  </div>
+</div>
+
+<!-- Pre-camera start -->
+<div id="start-wrap">
+  <button id="start-btn">Start Camera</button>
+</div>
+
+<script>
+'use strict';
+
+// ── STATE ────────────────────────────────────────────────────
+const S = {
+  stream:null, video:null, gl:null, prog:null, tex:null, animId:null,
+  frozen:false, torchOn:false,
+  zoom:1, sharp:0, contrast:1, brightness:0,
+  hc:false, invert:false, edge:false, cbType:0,
+  profiles:[], activeProfile:0,
+};
+
+// ── WEBGL SHADERS ────────────────────────────────────────────
+const VERT = `
+attribute vec2 a_pos; attribute vec2 a_uv; varying vec2 v_uv;
+void main(){ gl_Position=vec4(a_pos,0,1); v_uv=a_uv; }`;
+
+const FRAG = `
+precision mediump float;
+uniform sampler2D u_tex; uniform vec2 u_res;
+uniform float u_zoom, u_sharp, u_contrast, u_bright, u_edge;
+uniform int u_hc, u_inv, u_cb;
+varying vec2 v_uv;
+
+vec4 samp(vec2 uv){
+  vec2 z=(uv-0.5)/u_zoom+0.5;
+  if(z.x<0.0||z.x>1.0||z.y<0.0||z.y>1.0) return vec4(0,0,0,1);
+  return texture2D(u_tex,z);
+}
+
+vec4 sharpen(vec2 uv){
+  if(u_sharp<0.01) return samp(uv);
+  vec2 p=1.0/u_res;
+  vec4 c=samp(uv);
+  vec4 b=(samp(uv+vec2(-p.x,0))+samp(uv+vec2(p.x,0))+samp(uv+vec2(0,-p.y))+samp(uv+vec2(0,p.y))
+         +samp(uv+vec2(-p.x,-p.y))+samp(uv+vec2(p.x,-p.y))+samp(uv+vec2(-p.x,p.y))+samp(uv+vec2(p.x,p.y)))/8.0;
+  return clamp(c+u_sharp*(c-b),0.0,1.0);
+}
+
+vec4 sobel(vec2 uv){
+  vec2 p=1.0/u_res;
+  vec4 tl=samp(uv+vec2(-p.x,-p.y)),tc=samp(uv+vec2(0,-p.y)),tr=samp(uv+vec2(p.x,-p.y));
+  vec4 ml=samp(uv+vec2(-p.x,0)),mr=samp(uv+vec2(p.x,0));
+  vec4 bl=samp(uv+vec2(-p.x,p.y)),bc=samp(uv+vec2(0,p.y)),br=samp(uv+vec2(p.x,p.y));
+  vec4 gx=-tl+tr-2.0*ml+2.0*mr-bl+br;
+  vec4 gy=-tl-2.0*tc-tr+bl+2.0*bc+br;
+  return clamp(sqrt(gx*gx+gy*gy),0.0,1.0);
+}
+
+// Daltonize-style colorblind compensation
+vec3 cbComp(vec3 c, int t){
+  if(t==1){
+    // Deuteranopia: no green cone — shift green-channel error to R/B
+    vec3 sim=vec3(0.625*c.r+0.375*c.g, 0.700*c.r+0.300*c.g, 0.300*c.g+0.700*c.b);
+    vec3 err=c-sim;
+    return clamp(c+vec3(0.0, 0.7*err.r, 0.7*err.b),0.0,1.0);
+  }
+  if(t==2){
+    // Protanopia: no red cone
+    vec3 sim=vec3(0.0*c.r+2.023*c.g-2.526*c.b, c.g, c.b);
+    vec3 err=c-sim;
+    return clamp(c+vec3(0.0,0.7*err.r,0.7*err.r),0.0,1.0);
+  }
+  if(t==3){
+    // Tritanopia: no blue cone
+    vec3 sim=vec3(c.r, c.r*0.128+c.g*0.873, 0.0);
+    vec3 err=c-sim;
+    return clamp(c+vec3(0.7*err.b, 0.7*err.b, 0.0),0.0,1.0);
+  }
+  return c;
+}
+
+void main(){
+  vec4 col=sharpen(v_uv);
+
+  // edge enhance overlay
+  if(u_edge>0.0){
+    vec4 e=sobel(v_uv);
+    float el=dot(e.rgb,vec3(0.299,0.587,0.114));
+    col.rgb=clamp(col.rgb+el*1.6,0.0,1.0);
+  }
+
+  // contrast + brightness
+  col.rgb=clamp((col.rgb-0.5)*u_contrast+0.5+u_bright,0.0,1.0);
+
+  // colorblind compensation
+  if(u_cb>0) col.rgb=cbComp(col.rgb,u_cb);
+
+  // hi-contrast grayscale
+  if(u_hc==1){
+    float l=dot(col.rgb,vec3(0.299,0.587,0.114));
+    l=clamp((l-0.4)*3.0+0.5,0.0,1.0);
+    col.rgb=vec3(l);
+  }
+
+  // invert
+  if(u_inv==1) col.rgb=1.0-col.rgb;
+
+  gl_FragColor=col;
+}`;
+
+// ── WEBGL INIT ───────────────────────────────────────────────
+let uLocs = null;
+
+function initGL(canvas) {
+  const gl = canvas.getContext('webgl', { alpha:false, antialias:false, preserveDrawingBuffer:true });
+  if (!gl) return;
+  const mk = (type, src) => { const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s); return s; };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, mk(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, FRAG));
+  gl.linkProgram(prog); gl.useProgram(prog);
+
+  const verts = new Float32Array([-1,-1,0,1, 1,-1,1,1, -1,1,0,0, 1,1,1,0]);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+  [[`a_pos`,0],[`a_uv`,8]].forEach(([name,off])=>{
+    const loc=gl.getAttribLocation(prog,name);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc,2,gl.FLOAT,false,16,off);
+  });
+
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T].forEach(p=>gl.texParameteri(gl.TEXTURE_2D,p,gl.CLAMP_TO_EDGE));
+  [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER].forEach(p=>gl.texParameteri(gl.TEXTURE_2D,p,gl.LINEAR));
+
+  S.gl=gl; S.prog=prog; S.tex=tex; uLocs=null;
+}
+
+function getU() {
+  if (uLocs) return uLocs;
+  const gl=S.gl, p=S.prog;
+  uLocs = {};
+  ['u_res','u_zoom','u_sharp','u_contrast','u_bright','u_edge','u_hc','u_inv','u_cb']
+    .forEach(n => uLocs[n]=gl.getUniformLocation(p,n));
+  return uLocs;
+}
+
+// ── RENDER ───────────────────────────────────────────────────
+function draw() {
+  const { gl, tex, video, frozen } = S;
+  if (!gl) return;
+  const c = gl.canvas;
+  gl.viewport(0, 0, c.width, c.height);
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  if (!frozen) {
+    if (!video || video.readyState < 2) { S.animId=requestAnimationFrame(draw); return; }
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+  }
+  const u = getU();
+  gl.uniform2f(u.u_res, c.width, c.height);
+  gl.uniform1f(u.u_zoom, S.zoom);
+  gl.uniform1f(u.u_sharp, S.sharp);
+  gl.uniform1f(u.u_contrast, S.contrast);
+  gl.uniform1f(u.u_bright, S.brightness);
+  gl.uniform1f(u.u_edge, S.edge ? 1 : 0);
+  gl.uniform1i(u.u_hc,  S.hc     ? 1 : 0);
+  gl.uniform1i(u.u_inv, S.invert ? 1 : 0);
+  gl.uniform1i(u.u_cb,  S.cbType);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  if (!frozen) S.animId = requestAnimationFrame(draw);
+}
+
+// ── CAMERA ───────────────────────────────────────────────────
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1080} }, audio:false
+    });
+    const vid = document.createElement('video');
+    vid.srcObject=stream; vid.setAttribute('playsinline',''); vid.muted=true;
+    await vid.play();
+    S.stream=stream; S.video=vid;
+
+    const canvas = document.getElementById('glCanvas');
+    canvas.width  = window.innerWidth  * devicePixelRatio;
+    canvas.height = window.innerHeight * devicePixelRatio;
+    canvas.style.display = 'block';
+    document.getElementById('no-camera').style.display = 'none';
+    document.getElementById('start-wrap').style.display = 'none';
+    document.getElementById('toolbar').style.display = 'block';
+    document.getElementById('profile-badge').style.display = 'flex';
+    uLocs=null; initGL(canvas);
+    S.animId = requestAnimationFrame(draw);
+  } catch(e) { toast('Camera error: ' + e.message); }
+}
+
+// ── TORCH ────────────────────────────────────────────────────
+async function toggleTorch() {
+  if (!S.stream) return;
+  const track = S.stream.getVideoTracks()[0];
+  const caps = track.getCapabilities?.() ?? {};
+  if (!caps.torch) { toast('Torch not available on this device'); return; }
+  S.torchOn = !S.torchOn;
+  try {
+    await track.applyConstraints({ advanced:[{ torch:S.torchOn }] });
+    document.getElementById('btn-torch').classList.toggle('on', S.torchOn);
+  } catch { S.torchOn=false; toast('Torch failed'); }
+}
+
+// ── FREEZE ───────────────────────────────────────────────────
+function toggleFreeze() {
+  S.frozen = !S.frozen;
+  if (S.frozen) {
+    if (S.gl && S.video && S.video.readyState >= 2) {
+      S.gl.bindTexture(S.gl.TEXTURE_2D, S.tex);
+      S.gl.texImage2D(S.gl.TEXTURE_2D, 0, S.gl.RGBA, S.gl.RGBA, S.gl.UNSIGNED_BYTE, S.video);
+    }
+    cancelAnimationFrame(S.animId); S.animId=null;
+    draw(); // render once with frozen frame
+  } else {
+    if (S.stream) S.animId = requestAnimationFrame(draw);
+  }
+  document.getElementById('btn-freeze').classList.toggle('on', S.frozen);
+  document.getElementById('freeze-badge').classList.toggle('on', S.frozen);
+}
+
+// ── SAVE FRAME ───────────────────────────────────────────────
+function saveFrame() {
+  const canvas = document.getElementById('glCanvas');
+  if (canvas.style.display === 'none') { toast('Start camera first'); return; }
+  // Ensure a fresh render before toBlob
+  if (!S.frozen && S.video?.readyState >= 2) {
+    S.gl.bindTexture(S.gl.TEXTURE_2D, S.tex);
+    S.gl.texImage2D(S.gl.TEXTURE_2D, 0, S.gl.RGBA, S.gl.RGBA, S.gl.UNSIGNED_BYTE, S.video);
+    draw();
+  }
+  canvas.toBlob(blob => {
+    if (!blob) { toast('Could not capture frame'); return; }
+    const file = new File([blob], `vision-${Date.now()}.png`, { type:'image/png' });
+    if (navigator.canShare?.({ files:[file] })) {
+      navigator.share({ files:[file], title:'Vision Assist' }).catch(() => dlSave(blob));
+    } else { dlSave(blob); }
+  }, 'image/png');
+}
+function dlSave(blob) {
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'), { href:url, download:`vision-${Date.now()}.png` });
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  toast('Image saved');
+}
+
+// ── PROFILES ─────────────────────────────────────────────────
+const RX_IDS = ['od-sph','od-cyl','od-axis','od-add','os-sph','os-cyl','os-axis','os-add'];
+const BLANK = () => ({ name:'Default', ...Object.fromEntries(RX_IDS.map(k=>[k,''])) });
+
+function loadProfiles() {
+  try {
+    const p = JSON.parse(localStorage.getItem('vProfiles'));
+    if (Array.isArray(p) && p.length) return p;
+  } catch {}
+  return [BLANK()];
+}
+function saveProfiles() {
+  localStorage.setItem('vProfiles', JSON.stringify(S.profiles));
+  localStorage.setItem('vActive', S.activeProfile);
+}
+
+function renderTabs() {
+  const wrap = document.getElementById('profile-tabs');
+  wrap.innerHTML = '';
+  S.profiles.forEach((p, i) => {
+    const b = document.createElement('button');
+    b.className = 'ptab' + (i===S.activeProfile ? ' active' : '');
+    b.textContent = p.name || `Profile ${i+1}`;
+    b.onclick = () => { S.activeProfile=i; renderTabs(); fillForm(); };
+    wrap.appendChild(b);
+  });
+  const add = document.createElement('button');
+  add.className='ptab add'; add.textContent='+ New';
+  add.onclick = () => {
+    S.profiles.push({ ...BLANK(), name:`Profile ${S.profiles.length+1}` });
+    S.activeProfile = S.profiles.length-1;
+    renderTabs(); fillForm();
+  };
+  wrap.appendChild(add);
+}
+function fillForm() {
+  const p = S.profiles[S.activeProfile] ?? BLANK();
+  document.getElementById('rx-name').value = p.name ?? '';
+  RX_IDS.forEach(k => { const el=document.getElementById(k); if(el) el.value=p[k]??''; });
+}
+function readForm() {
+  const rx = { name: document.getElementById('rx-name').value || 'Profile' };
+  RX_IDS.forEach(k => { const v=document.getElementById(k)?.value; rx[k]=v!==''&&v!=null?parseFloat(v):''; });
+  return rx;
+}
+function applyRxSuggestions(rx) {
+  const sph = parseFloat(rx['od-sph'])||parseFloat(rx['os-sph'])||0;
+  const a = Math.abs(sph);
+  let z=1, sh=0;
+  if(a>=0.5&&a<2){z=1.5;sh=0.3;} if(a>=2&&a<4){z=2;sh=0.6;}
+  if(a>=4&&a<6){z=2.5;sh=1.0;}   if(a>=6){z=3;sh=1.2;}
+  const add=parseFloat(rx['od-add'])||parseFloat(rx['os-add'])||0;
+  if(add>0) z=Math.max(z,1.5);
+  setSlider('zoom', z); setSlider('sharp', sh);
+}
+function updateBadge() {
+  document.getElementById('pb-name').textContent = S.profiles[S.activeProfile]?.name || 'Rx';
+}
+
+// ── SLIDERS ──────────────────────────────────────────────────
+const SLIDERS = {
+  zoom:     { sid:'s-zoom',     did:'d-zoom',     min:1,    max:8,   skey:'zoom',       fmt:x=>x.toFixed(1)+'×'  },
+  sharp:    { sid:'s-sharp',    did:'d-sharp',    min:0,    max:3,   skey:'sharp',      fmt:x=>x.toFixed(2)      },
+  contrast: { sid:'s-contrast', did:'d-contrast', min:0.5,  max:2.5, skey:'contrast',   fmt:x=>x.toFixed(2)      },
+  bright:   { sid:'s-bright',   did:'d-bright',   min:-0.4, max:0.4, skey:'brightness', fmt:x=>(x>=0?'+':'')+x.toFixed(2) },
+};
+function setSlider(key, v) {
+  const c = SLIDERS[key]; if (!c) return;
+  v = Math.min(c.max, Math.max(c.min, v));
+  S[c.skey] = v;
+  const sl = document.getElementById(c.sid);
+  const dsp = document.getElementById(c.did);
+  if (sl)  sl.value = v;
+  if (dsp) dsp.textContent = c.fmt(v);
+}
+Object.entries(SLIDERS).forEach(([key, c]) => {
+  document.getElementById(c.sid)?.addEventListener('input', e => {
+    S[c.skey] = parseFloat(e.target.value);
+    document.getElementById(c.did).textContent = c.fmt(S[c.skey]);
+  });
+});
+
+// ── PINCH ZOOM ───────────────────────────────────────────────
+let p0=null, z0=1;
+document.getElementById('camera-wrap').addEventListener('touchstart', e=>{
+  if(e.touches.length===2){ p0=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY); z0=S.zoom; }
+},{ passive:true });
+document.getElementById('camera-wrap').addEventListener('touchmove', e=>{
+  if(e.touches.length===2&&p0){ const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY); setSlider('zoom',z0*(d/p0)); }
+},{ passive:true });
+document.getElementById('camera-wrap').addEventListener('touchend',()=>p0=null,{passive:true});
+
+// ── SHEET MANAGER ────────────────────────────────────────────
+let curSheet = null;
+function openSheet(id) {
+  if (curSheet && curSheet!==id) closeSheet(curSheet);
+  document.getElementById(id).classList.add('open');
+  document.getElementById('dimmer').classList.add('on');
+  curSheet=id;
+  // sync toolbar button states
+  document.getElementById('btn-adj' ).classList.toggle('on', id==='ctrl-sheet');
+  document.getElementById('btn-filt').classList.toggle('on', id==='filt-sheet');
+}
+function closeSheet(id) {
+  if (id) document.getElementById(id).classList.remove('open');
+  document.getElementById('dimmer').classList.remove('on');
+  document.getElementById('btn-adj').classList.remove('on');
+  document.getElementById('btn-filt').classList.remove('on');
+  curSheet=null;
+}
+document.getElementById('dimmer').addEventListener('click', ()=>closeSheet(curSheet));
+
+// ── TOAST ────────────────────────────────────────────────────
+let toastT=null;
+function toast(msg) {
+  const el=document.getElementById('toast');
+  el.textContent=msg; el.classList.add('show');
+  clearTimeout(toastT); toastT=setTimeout(()=>el.classList.remove('show'), 2200);
+}
+
+// ── EVENT WIRING ─────────────────────────────────────────────
+document.getElementById('start-btn').onclick = startCamera;
+document.getElementById('btn-torch').onclick  = toggleTorch;
+document.getElementById('btn-freeze').onclick = toggleFreeze;
+document.getElementById('btn-save').onclick   = saveFrame;
+
+document.getElementById('btn-filt').onclick = () => curSheet==='filt-sheet' ? closeSheet('filt-sheet') : openSheet('filt-sheet');
+document.getElementById('btn-adj').onclick  = () => curSheet==='ctrl-sheet' ? closeSheet('ctrl-sheet') : openSheet('ctrl-sheet');
+
+document.getElementById('btn-rx').onclick = () => { renderTabs(); fillForm(); document.getElementById('rx-panel').classList.add('open'); };
+document.getElementById('profile-badge').onclick = () => { renderTabs(); fillForm(); document.getElementById('rx-panel').classList.add('open'); };
+
+document.getElementById('rx-cancel').onclick = () => document.getElementById('rx-panel').classList.remove('open');
+document.getElementById('rx-panel').addEventListener('click', e => {
+  if (e.target===document.getElementById('rx-panel')) document.getElementById('rx-panel').classList.remove('open');
+});
+document.getElementById('rx-save').onclick = () => {
+  const rx=readForm(); S.profiles[S.activeProfile]=rx;
+  saveProfiles(); updateBadge(); applyRxSuggestions(rx);
+  document.getElementById('rx-panel').classList.remove('open');
+  toast('Prescription saved ✓');
+};
+document.getElementById('rx-delete').onclick = () => {
+  if (S.profiles.length<=1){ toast('Need at least one profile'); return; }
+  S.profiles.splice(S.activeProfile,1);
+  S.activeProfile=Math.max(0,S.activeProfile-1);
+  saveProfiles(); renderTabs(); fillForm(); toast('Profile deleted');
+};
+
+// Filter chips
+const filterToggle = (chip, key) => {
+  S[key]=!S[key];
+  document.getElementById(chip).classList.toggle('on',S[key]);
+};
+document.getElementById('fc-hc'  ).onclick = ()=>filterToggle('fc-hc','hc');
+document.getElementById('fc-inv' ).onclick = ()=>filterToggle('fc-inv','invert');
+document.getElementById('fc-edge').onclick = ()=>filterToggle('fc-edge','edge');
+
+const cbIds = ['fc-deut','fc-prot','fc-trit'];
+function setCB(t) {
+  S.cbType = S.cbType===t ? 0 : t;
+  cbIds.forEach((id,i) => document.getElementById(id).classList.toggle('on', S.cbType===i+1));
+}
+document.getElementById('fc-deut').onclick = ()=>setCB(1);
+document.getElementById('fc-prot').onclick = ()=>setCB(2);
+document.getElementById('fc-trit').onclick = ()=>setCB(3);
+
+// Resize
+window.addEventListener('resize', ()=>{
+  const c=document.getElementById('glCanvas');
+  if(c.style.display!=='none'){ c.width=window.innerWidth*devicePixelRatio; c.height=window.innerHeight*devicePixelRatio; }
+});
+
+// ── INIT ─────────────────────────────────────────────────────
+(()=>{
+  S.profiles = loadProfiles();
+  try { S.activeProfile = Math.min(parseInt(localStorage.getItem('vActive'))||0, S.profiles.length-1); } catch {}
+  updateBadge();
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
+})();
+</script>
+</body>
+</html>
